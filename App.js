@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, Pressable, StyleSheet, Animated } from "react-native";
+import { useAudioPlayer } from "expo-audio";
 
 export default function App() {
   const [gameState, setGameState] = useState("start");
@@ -9,11 +10,13 @@ export default function App() {
   const [balloonVisible, setBalloonVisible] = useState(false);
 
   const balloonAnim = useRef(new Animated.Value(0)).current;
-  const balloonTargetXRef = useRef(0);
+  const balloonProgressRef = useRef(0);
   const animationRef = useRef(null);
   const currentRoundRef = useRef(0);
   const gameStateRef = useRef(gameState);
   const scoreRef = useRef(score);
+
+  const popPlayer = useAudioPlayer(require("./assets/Pop.mp3"));
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -31,15 +34,22 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const id = balloonAnim.addListener(({ value }) => {
+      balloonProgressRef.current = value;
+    });
+
+    return () => {
+      balloonAnim.removeListener(id);
+    };
+  }, [balloonAnim]);
+
   const startRound = (roundNumber) => {
     if (animationRef.current) {
       animationRef.current.stop();
     }
 
     const duration = Math.max(700, 2200 - roundNumber * 150);
-
-    const randomX = (Math.random() - 0.5) * 240;
-    balloonTargetXRef.current = randomX;
 
     setBalloonVisible(true);
     balloonAnim.setValue(0);
@@ -73,35 +83,53 @@ export default function App() {
     startRound(1);
   };
 
-  const handleBalloonTap = () => {
+  const handleShoot = () => {
     if (gameStateRef.current !== "playing") return;
     if (!balloonVisible) return;
 
-    setBalloonVisible(false);
-    if (animationRef.current) {
-      animationRef.current.stop();
-    }
+    const progress = balloonProgressRef.current;
+    const hitMin = 0.45;
+    const hitMax = 0.55;
 
-    setScore((prev) => prev + 1);
-    const nextRound = currentRoundRef.current + 1;
-    currentRoundRef.current = nextRound;
-    setRound(nextRound);
-
-    setTimeout(() => {
-      if (gameStateRef.current === "playing") {
-        startRound(nextRound);
+    if (progress >= hitMin && progress <= hitMax) {
+      setBalloonVisible(false);
+      if (animationRef.current) {
+        animationRef.current.stop();
       }
-    }, 400);
+
+      if (popPlayer) {
+        popPlayer.seekTo(0);
+        popPlayer.play();
+      }
+
+      setScore((prev) => prev + 1);
+      const nextRound = currentRoundRef.current + 1;
+      currentRoundRef.current = nextRound;
+      setRound(nextRound);
+
+      setTimeout(() => {
+        if (gameStateRef.current === "playing") {
+          startRound(nextRound);
+        }
+      }, 400);
+    } else {
+      setBalloonVisible(false);
+      if (animationRef.current) {
+        animationRef.current.stop();
+      }
+      setBestScore((prev) => Math.max(prev, scoreRef.current));
+      setGameState("gameover");
+    }
   };
 
   const balloonTranslateY = balloonAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [140, -180],
+    outputRange: [0, 0],
   });
 
   const balloonTranslateX = balloonAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, balloonTargetXRef.current],
+    outputRange: [-140, 140],
   });
 
   if (gameState === "start") {
@@ -137,6 +165,7 @@ export default function App() {
       <Text style={styles.score}>Score: {score}</Text>
       <Text style={styles.round}>Round: {round}</Text>
       <View style={styles.gameArea}>
+        <View style={styles.aimLine} />
         {balloonVisible && (
           <Animated.View
             style={[
@@ -149,17 +178,23 @@ export default function App() {
               },
             ]}
           >
-            <Pressable onPress={handleBalloonTap} hitSlop={20}>
-              <View style={styles.balloonBody}>
-                <View style={styles.balloonHighlight} />
-              </View>
-              <View style={styles.balloonString} />
-            </Pressable>
+            <View style={styles.balloonBody}>
+              <View style={styles.balloonHighlight} />
+            </View>
+            <View style={styles.balloonString} />
           </Animated.View>
         )}
       </View>
-      <Text style={styles.hint}>Tap directly on the balloon before it hits the spikes.</Text>
-      <Text style={styles.life}>One life only. Miss it and it's over.</Text>
+      <View style={styles.gunArea}>
+        <View style={styles.gun}>
+          <View style={styles.gunBarrel} />
+        </View>
+      </View>
+      <Pressable style={styles.shootButton} onPress={handleShoot}>
+        <Text style={styles.shootButtonText}>SHOOT</Text>
+      </Pressable>
+      <Text style={styles.hint}>Press SHOOT when the balloon crosses the line.</Text>
+      <Text style={styles.life}>One life only. Miss and it's over.</Text>
     </View>
   );
 }
@@ -221,7 +256,7 @@ const styles = StyleSheet.create({
     marginTop: 32,
     overflow: "hidden",
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "center",
   },
   balloon: {
     alignItems: "center",
@@ -250,6 +285,44 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     marginTop: 4,
     alignSelf: "center",
+  },
+  aimLine: {
+    position: "absolute",
+    width: 4,
+    height: "100%",
+    backgroundColor: "rgba(255,255,255,0.2)",
+  },
+  gunArea: {
+    marginTop: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gun: {
+    width: 80,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "#263238",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gunBarrel: {
+    width: 10,
+    height: 26,
+    borderRadius: 4,
+    backgroundColor: "#b0bec5",
+  },
+  shootButton: {
+    marginTop: 12,
+    backgroundColor: "#ff5252",
+    paddingVertical: 12,
+    paddingHorizontal: 40,
+    borderRadius: 999,
+  },
+  shootButtonText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "700",
+    letterSpacing: 1,
   },
   hint: {
     marginTop: 24,
